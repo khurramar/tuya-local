@@ -140,13 +140,13 @@ class TuyaLocalDevice(object):
         # we can overlay onto the state while we wait for the board to update
         # its switches.
         self._FAKE_IT_TIMEOUT = 5
-        self._CACHE_TIMEOUT = 30
+        self._CACHE_TIMEOUT = 10
         # More attempts are needed in auto mode so we can cycle through all
         # the possibilities a couple of times
         self._AUTO_CONNECTION_ATTEMPTS = len(API_PROTOCOL_VERSIONS) * 2 + 1
-        self._SINGLE_PROTO_CONNECTION_ATTEMPTS = 3
+        self._SINGLE_PROTO_CONNECTION_ATTEMPTS = 2 # handles tiny network drops without marking unavailable
         # The number of failures from a working protocol before retrying other protocols.
-        self._AUTO_FAILURE_RESET_COUNT = 10
+        self._AUTO_FAILURE_RESET_COUNT = 3 # only real failures cause protocol reset
         self._lock = Lock()
 
     @property
@@ -391,6 +391,11 @@ class TuyaLocalDevice(object):
                     type(t).__name__,
                     t,
                 )
+                
+                for entity in self._children:
+                    entity._attr_available = False
+                    entity.async_schedule_update_ha_state()
+                
                 self._api.set_socketPersistent(False)
                 if self._api.parent:
                     self._api.parent.set_socketPersistent(False)
@@ -640,6 +645,14 @@ class TuyaLocalDevice(object):
                 if i + 1 == connections:
                     self._reset_cached_state()
                     self._api_working_protocol_failures += 1
+
+                    for entity in self._children:
+                        try:
+                            entity._attr_available = False
+                            entity.async_schedule_update_ha_state()
+                        except Exception as e:
+                            _LOGGER.debug("%s: failed to mark unavailable: %s", self.name, e)
+                            
                     if (
                         self._api_working_protocol_failures
                         > self._AUTO_FAILURE_RESET_COUNT
